@@ -10,4 +10,6 @@
     <string name="deposit_action">Пополнить</string>
     <string name="transfer_action">Перевести</string>
     <string name="error_general">Произошла ошибка</string>
+    <string name="timeout_error">Time error</string>
+    <string name="network_error">Network Error</string>
 </resources>

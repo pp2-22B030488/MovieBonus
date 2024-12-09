@@ -9,11 +9,10 @@ import com.example.demo.model.api.MovieApi
 import com.example.demo.model.dao.MovieDao
 import com.example.demo.model.entity.Movie
 import com.example.demo.model.entity.MovieEntity
+import com.example.demo.model.entity.movieEntityMapper
 import com.example.demo.model.entity.movieMapper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
+import java.util.concurrent.TimeoutException
 
 class MovieViewModel(
     private val client: MovieApi,
@@ -28,43 +27,51 @@ class MovieViewModel(
             try {
                 if (isFavourite) {
                     movieDao.insert(MovieEntity.from(movie))
-
                     _movieListUI.value = MovieListUI.MovieInserted(movie.copy(isFavourite = true))
                 }
             } catch (e: Exception) {
                 println("MovieInsertException: $e")
-
                 _movieListUI.value = MovieListUI.MovieIsAlreadyFavourite
             }
         }
     }
-
     fun fetchPopularMovieList() {
         _movieListUI.value = MovieListUI.Loading(true)
 
-        viewModelScope.launch(Dispatchers.IO) {
-            println("RoomDatabase: ${movieDao.getAll()}")
-
-            val movieListDeferred = async {
-                client.fetchMovieList()
-            }
-
-            val genreListDeferred = async {
-                client.fetchMovieGenres()
-            }
-
-            val movieList = movieListDeferred.await()
-            val genreList = genreListDeferred.await()
-
-            withContext(Dispatchers.Main) {
-                println(genreList)
-
-                if (movieList.results.isEmpty()) {
-                    _movieListUI.value = MovieListUI.Empty
-                } else {
-                    _movieListUI.value = MovieListUI.Success(movieList.results.map(movieMapper))
+        viewModelScope.launch {
+            try {
+                val cachedMovieList = withTimeoutOrNull(3000) {
+                    movieDao.getAll().map(movieEntityMapper)
                 }
 
+                if (cachedMovieList != null) {
+                    _movieListUI.value = MovieListUI.Success(cachedMovieList)
+                } else {
+                    val movieList = withContext(Dispatchers.IO) {
+                        val movieListDeferred = async { client.fetchMovieList() }
+                        val movieList = movieListDeferred.await()
+                        movieList.results.map(movieMapper)
+                    }
+                    _movieListUI.value = MovieListUI.Success(movieList)
+
+                    movieList.forEach { movie ->
+                        launch {
+                            try {
+                                movieDao.insert(MovieEntity.from(movie))
+                            }
+                            catch (e: Exception) {
+                                println("MovieInsertException: $e")
+                            }
+                        }
+                    }
+                }
+
+            } catch (e: TimeoutException) {
+                _movieListUI.value = MovieListUI.Error(errorMessage = com.example.demo.R.string.timeout_error) // Replace with your actual error string resource
+            } catch (e: Exception) {
+                println("MovieRetrieveError: $e")
+                _movieListUI.value = MovieListUI.Error(errorMessage = com.example.demo.R.string.network_error) // Replace with your actual error string resource
+            } finally {
                 _movieListUI.value = MovieListUI.Loading(false)
             }
         }
